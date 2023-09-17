@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# Takes a file given by the first argument, and send it to yourself.
+
+filename="$1"
+
+username_encoded=$(awk -F '=' '/user/ {print $2}' ~/.config/mailtome.conf)
+password_encoded=$(awk -F '=' '/pass/ {print $2}' ~/.config/mailtome.conf)
+sender=$(awk -F '=' '/email/ {print $2}' ~/.config/mailtome.conf)
+
+boundary=$(uuidgen)
+
+mime_type=$(
+  curl -s "https://gist.githubusercontent.com/AshHeskes/6038140/raw/27c8b1e28ce4c3aff0c0d8d3d7dbcb099a22c889/file-extension-to-mime-types.json" | \
+  python3 -c "import sys, json; print(json.load(sys.stdin)[\".${filename##*.}\"])"
+)
+
+{
+  # TODO could probably use expect here instead of flat sleeps
+  function decho () {
+    sleep 0.25
+    echo "$1"
+  }
+
+  decho "EHLO smtp.gmail.com"
+  decho "auth login"
+  decho "${username_encoded}"
+  decho "${password_encoded}"
+  decho "mail from:<${sender}>"
+  decho "rcpt to:<${sender}>"
+  decho "data"
+
+  sleep 0.5
+
+  cat << EOF
+From: ${sender}
+To: ${sender}
+Subject: mailtome attachment
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=${boundary}
+
+--${boundary}
+Content-Type: text/plain; charset=UTF-8
+Content-Disposition: inline
+
+Here's what you ordered!
+--${boundary}
+Content-Type: ${mime_type}
+Content-Disposition: attachment; filename=$(basename -- $filename)
+Content-Transfer-Encoding: base64
+
+$(base64 --wrap 0 ${filename})
+--${boundary}--
+.
+EOF
+
+  echo "QUIT"
+} | openssl s_client -ign_eof -crlf -connect smtp.gmail.com:465
+
